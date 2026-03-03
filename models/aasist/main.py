@@ -22,8 +22,8 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchcontrib.optim import SWA
 
-from data_utils import (Dataset_ASVspoof2019_train,
-                        Dataset_ASVspoof2019_devNeval, genSpoof_list)
+from data_utils import (Dataset_ASVspoof5_train,
+                        Dataset_ASVspoof5_devNeval, genSpoof_list_asv5)
 from evaluation import calculate_tDCF_EER
 from utils import create_optimizer, seed_worker, set_seed, str_to_bool
 
@@ -225,31 +225,27 @@ def get_loader(
         seed: int,
         config: dict) -> List[torch.utils.data.DataLoader]:
     """Make PyTorch DataLoaders for train / developement / evaluation"""
-    track = config["track"]
-    prefix_2019 = "ASVspoof2019.{}".format(track)
+    database_path = Path(database_path)
 
-    trn_database_path = database_path / "ASVspoof2019_{}_train/".format(track)
-    dev_database_path = database_path / "ASVspoof2019_{}_dev/".format(track)
-    eval_database_path = database_path / "ASVspoof2019_{}_eval/".format(track)
+    # ---------------------------------------------------------
+    # 修改 1：适配 ASVspoof 5 的真实路径结构
+    # 注意：请确保这些路径与你本地 SSD 上的目录名一致！
+    # ---------------------------------------------------------
+    trn_database_path = database_path / "flac_T"  # 训练集音频目录 (示例名)
+    dev_database_path = database_path / "flac_D"  # 验证集音频目录 (示例名)
+    eval_database_path = database_path / "flac_E" # 评估集音频目录 (示例名)
 
-    trn_list_path = (database_path /
-                     "ASVspoof2019_{}_cm_protocols/{}.cm.train.trn.txt".format(
-                         track, prefix_2019))
-    dev_trial_path = (database_path /
-                      "ASVspoof2019_{}_cm_protocols/{}.cm.dev.trl.txt".format(
-                          track, prefix_2019))
-    eval_trial_path = (
-        database_path /
-        "ASVspoof2019_{}_cm_protocols/{}.cm.eval.trl.txt".format(
-            track, prefix_2019))
+    trn_list_path = database_path / "ASVspoof5.train.tsv"
+    dev_trial_path = database_path / "ASVspoof5.dev.track1.tsv"
+    eval_trial_path = database_path / "ASVspoof5.eval.track1.tsv" # 假设的评估集协议名
 
-    d_label_trn, file_train = genSpoof_list(dir_meta=trn_list_path,
+    d_label_trn, file_train = genSpoof_list_asv5(dir_meta=trn_list_path,
                                             is_train=True,
                                             is_eval=False)
     print("no. training files:", len(file_train))
 
-    train_set = Dataset_ASVspoof2019_train(list_IDs=file_train,
-                                           labels=d_label_trn,
+    train_set = Dataset_ASVspoof5_train(list_IDs=file_train,
+                                           labels_dict=d_label_trn, # 注意这里改成了 labels_dict
                                            base_dir=trn_database_path)
     gen = torch.Generator()
     gen.manual_seed(seed)
@@ -261,12 +257,12 @@ def get_loader(
                             worker_init_fn=seed_worker,
                             generator=gen)
 
-    _, file_dev = genSpoof_list(dir_meta=dev_trial_path,
+    _, file_dev = genSpoof_list_asv5(dir_meta=dev_trial_path,
                                 is_train=False,
                                 is_eval=False)
     print("no. validation files:", len(file_dev))
 
-    dev_set = Dataset_ASVspoof2019_devNeval(list_IDs=file_dev,
+    dev_set = Dataset_ASVspoof5_devNeval(list_IDs=file_dev,
                                             base_dir=dev_database_path)
     dev_loader = DataLoader(dev_set,
                             batch_size=config["batch_size"],
@@ -274,16 +270,20 @@ def get_loader(
                             drop_last=False,
                             pin_memory=True)
 
-    file_eval = genSpoof_list(dir_meta=eval_trial_path,
-                              is_train=False,
-                              is_eval=True)
-    eval_set = Dataset_ASVspoof2019_devNeval(list_IDs=file_eval,
-                                             base_dir=eval_database_path)
-    eval_loader = DataLoader(eval_set,
-                             batch_size=config["batch_size"],
-                             shuffle=False,
-                             drop_last=False,
-                             pin_memory=True)
+    # 如果还没发布 eval 集，可以暂时将其注释掉或者用 dev 替代
+    if eval_trial_path.exists():
+        file_eval = genSpoof_list_asv5(dir_meta=eval_trial_path,
+                                  is_train=False,
+                                  is_eval=True)
+        eval_set = Dataset_ASVspoof5_devNeval(list_IDs=file_eval,
+                                                 base_dir=eval_database_path)
+        eval_loader = DataLoader(eval_set,
+                                 batch_size=config["batch_size"],
+                                 shuffle=False,
+                                 drop_last=False,
+                                 pin_memory=True)
+    else:
+        eval_loader = dev_loader # 找不到就用 dev 占位
 
     return trn_loader, dev_loader, eval_loader
 
@@ -312,9 +312,19 @@ def produce_evaluation_file(
     assert len(trial_lines) == len(fname_list) == len(score_list)
     with open(save_path, "w") as fh:
         for fn, sco, trl in zip(fname_list, score_list, trial_lines):
-            _, utt_id, _, src, key = trl.strip().split(' ')
+            cols = trl.strip().split()
+            if len(cols) < 9:
+                continue
+                
+            # ---------------------------------------------------------
+            # 修改 2：兼容 ASVspoof 5 格式并输出供 evaluation.py 计算的格式
+            # ---------------------------------------------------------
+            utt_id = cols[1]
+            label = cols[8] # bonafide or spoof
             assert fn == utt_id
-            fh.write("{} {} {} {}\n".format(utt_id, src, key, sco))
+            
+            # 写入格式：utt_id - label score (兼容现有的 calculate_tDCF_EER 函数)
+            fh.write("{} - {} {}\n".format(utt_id, label, sco))
     print("Scores saved to {}".format(save_path))
 
 
