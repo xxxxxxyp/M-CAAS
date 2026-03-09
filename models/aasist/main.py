@@ -29,7 +29,10 @@ from utils import create_optimizer, seed_worker, set_seed, str_to_bool
 
 from tqdm import tqdm
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "evaluation-package"))
+evaluation_package_dir = os.path.join(
+    os.path.dirname(__file__), "evaluation-package")
+if evaluation_package_dir not in sys.path:
+    sys.path.append(evaluation_package_dir)
 from calculate_metrics import calculate_minDCF_EER_CLLR_actDCF
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -58,6 +61,10 @@ def evaluate_with_official_package(
 
     min_dcf, eer, cllr, act_dcf = calculate_minDCF_EER_CLLR_actDCF(
         cm_scores, cm_keys, output_file, printout=False)
+    min_dcf = float(min_dcf)
+    eer = float(eer)
+    cllr = float(cllr)
+    act_dcf = float(act_dcf)
 
     with open(output_file, "w") as f_res:
         f_res.write("\nCM SYSTEM\n")
@@ -202,20 +209,20 @@ def main(args: argparse.Namespace) -> None:
                     output_file=metric_path /
                     "minDCF_EER_CLLR_actDCF_{:03d}epo.txt".format(epoch))
 
-                log_text = "epoch{:03d}, ".format(epoch)
+                log_items = ["epoch{:03d}".format(epoch)]
                 if eval_eer < best_eval_eer:
-                    log_text += "best eer, {:.4f}%".format(eval_eer)
+                    log_items.append("best eer {:.4f}%".format(eval_eer))
                     best_eval_eer = eval_eer
                 if eval_minDCF < best_eval_minDCF:
-                    log_text += "best minDCF, {:.4f}".format(eval_minDCF)
+                    log_items.append("best minDCF {:.4f}".format(eval_minDCF))
                     best_eval_minDCF = eval_minDCF
                     torch.save(model.state_dict(),
                                model_save_path / "best.pth")
-                log_text += ", actDCF: {:.4f}, CLLR: {:.4f}".format(
-                    eval_actDCF, eval_cllr)
-                if len(log_text) > 0:
-                    print(log_text)
-                    f_log.write(log_text + "\n")
+                log_items.append("actDCF {:.4f}".format(eval_actDCF))
+                log_items.append("CLLR {:.4f}".format(eval_cllr))
+                log_text = ", ".join(log_items)
+                print(log_text)
+                f_log.write(log_text + "\n")
 
             print("Saving epoch {} for swa".format(epoch))
             optimizer_swa.update_swa()
@@ -370,7 +377,7 @@ def produce_evaluation_file(
             label = cols[8] # bonafide or spoof
             assert fn == utt_id
             
-            # 写入格式：utt_id - label score (兼容现有的 calculate_tDCF_EER 函数)
+            # Write format: utt_id - label score (for official ASVspoof 5 evaluation package)
             fh.write("{} - {} {}\n".format(utt_id, label, sco))
     print("Scores saved to {}".format(save_path))
 
