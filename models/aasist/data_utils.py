@@ -4,6 +4,8 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from pathlib import Path
+
 ___author__ = "Hemlata Tak, Jee-weon Jung"
 __email__ = "tak@eurecom.fr, jeeweon.jung@navercorp.com"
 
@@ -21,9 +23,11 @@ def pad(x, max_len=64600):
 def pad_random(x: np.ndarray, max_len: int = 64600):
     x_len = x.shape[0]
     # if duration is already long enough
-    if x_len >= max_len:
+    if x_len > max_len:
         stt = np.random.randint(x_len - max_len)
         return x[stt:stt + max_len]
+    elif x_len == max_len:
+        return x
 
     # if too short
     num_repeats = int(max_len / x_len) + 1
@@ -100,8 +104,13 @@ class Dataset_ASVspoof5_train(Dataset):
         key = self.list_IDs[index]
         # 注意 ASVspoof5 的扩展名通常还是 .flac，如果是 .wav 请修改这里
         audio_path = self.base_dir / f"{key}.flac"
-        
-        X, _ = sf.read(str(audio_path))
+        try:
+            X, _ = sf.read(str(audio_path))
+        except Exception as e:
+            # 如果文件损坏或读取失败，打印警告，并生成一段全 0 的静音数据骗过模型
+            print(f"\n[数据损坏警告] 无法读取文件: {audio_path} | 错误信息: {e}")
+            X = np.zeros(self.cut, dtype=np.float32)
+
         X_pad = pad_random(X, self.cut)
         x_inp = Tensor(X_pad)
         
@@ -122,8 +131,13 @@ class Dataset_ASVspoof5_devNeval(Dataset):
     def __getitem__(self, index):
         key = self.list_IDs[index]
         audio_path = self.base_dir / f"{key}.flac"
-        
-        X, _ = sf.read(str(audio_path))
+        try:
+            X, _ = sf.read(str(audio_path))
+        except Exception as e:
+            # 同样生成静音数据占位，保证评估流程不中断
+            print(f"\n[数据损坏警告] 无法读取文件: {audio_path} | 错误信息: {e}")
+            X = np.zeros(self.cut, dtype=np.float32)
+            
         X_pad = pad(X, self.cut)
         x_inp = Tensor(X_pad)
         

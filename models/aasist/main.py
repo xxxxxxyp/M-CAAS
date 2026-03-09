@@ -27,6 +27,8 @@ from data_utils import (Dataset_ASVspoof5_train,
 from evaluation import calculate_tDCF_EER
 from utils import create_optimizer, seed_worker, set_seed, str_to_bool
 
+from tqdm import tqdm
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
@@ -42,7 +44,7 @@ def main(args: argparse.Namespace) -> None:
     optim_config = config["optim_config"]
     optim_config["epochs"] = config["num_epochs"]
     track = config["track"]
-    assert track in ["LA", "PA", "DF"], "Invalid track given"
+
     if "eval_all_best" not in config:
         config["eval_all_best"] = "True"
     if "freq_aug" not in config:
@@ -53,15 +55,13 @@ def main(args: argparse.Namespace) -> None:
 
     # define database related paths
     output_dir = Path(args.output_dir)
-    prefix_2019 = "ASVspoof2019.{}".format(track)
+    prefix_2019 = "ASVspoof5.{}".format(track)
     database_path = Path(config["database_path"])
     dev_trial_path = (database_path /
-                      "ASVspoof2019_{}_cm_protocols/{}.cm.dev.trl.txt".format(
-                          track, prefix_2019))
+                      "ASVspoof5.dev.track1.tsv")
     eval_trial_path = (
         database_path /
-        "ASVspoof2019_{}_cm_protocols/{}.cm.eval.trl.txt".format(
-            track, prefix_2019))
+        "/root/lanyun-fs/M-CAAS/data/ASVspoof5.eval.track1.tsv")
 
     # define model related paths
     model_tag = "{}_{}_ep{}_bs{}".format(
@@ -254,6 +254,7 @@ def get_loader(
                             shuffle=True,
                             drop_last=True,
                             pin_memory=True,
+                            num_workers=24,
                             worker_init_fn=seed_worker,
                             generator=gen)
 
@@ -268,7 +269,8 @@ def get_loader(
                             batch_size=config["batch_size"],
                             shuffle=False,
                             drop_last=False,
-                            pin_memory=True)
+                            pin_memory=True,
+                            num_workers=24)
 
     # 如果还没发布 eval 集，可以暂时将其注释掉或者用 dev 替代
     if eval_trial_path.exists():
@@ -281,7 +283,8 @@ def get_loader(
                                  batch_size=config["batch_size"],
                                  shuffle=False,
                                  drop_last=False,
-                                 pin_memory=True)
+                                 pin_memory=True,
+                                 num_workers=24)
     else:
         eval_loader = dev_loader # 找不到就用 dev 占位
 
@@ -344,7 +347,14 @@ def train_epoch(
     # set objective (Loss) functions
     weight = torch.FloatTensor([0.1, 0.9]).to(device)
     criterion = nn.CrossEntropyLoss(weight=weight)
-    for batch_x, batch_y in trn_loader:
+
+    pbar = tqdm(trn_loader, desc="Training")
+
+    for batch_x, batch_y in pbar:
+
+        if ii == 0:
+            print("🚀 首个 Batch 已经成功从硬盘加载进了显存！")
+
         batch_size = batch_x.size(0)
         num_total += batch_size
         ii += 1
@@ -356,6 +366,9 @@ def train_epoch(
         optim.zero_grad()
         batch_loss.backward()
         optim.step()
+
+        current_lr = optim.param_groups[0]['lr']
+        pbar.set_postfix({"Loss": f"{batch_loss.item():.4f}", "LR": f"{current_lr:.2e}"})
 
         if config["optim_config"]["scheduler"] in ["cosine", "keras_decay"]:
             scheduler.step()

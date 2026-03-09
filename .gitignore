@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# PyTorch
+*.pth
+*.pt
+!models/best_model.pth  # Keep best model
+
+# Data
+data/raw/
+data/processed/
+*.nii
+*.nii.gz
+
+# Logs
+logs/
+*.log
+
+# TensorBoard
+runs/
+events.out.tfevents.*
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Model checkpoints (except best model)
+models/checkpoints/*.pth
+
+# Inference outputs (keep structure but not large files)
+inference/prob_maps/*.nii.gz
+
+# Environment files
+environment.txt
+pip_freeze.txt
