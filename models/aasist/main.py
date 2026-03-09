@@ -16,6 +16,7 @@ from pathlib import Path
 from shutil import copy
 from typing import Dict, List, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -24,12 +25,58 @@ from torchcontrib.optim import SWA
 
 from data_utils import (Dataset_ASVspoof5_train,
                         Dataset_ASVspoof5_devNeval, genSpoof_list_asv5)
-from evaluation import calculate_tDCF_EER
 from utils import create_optimizer, seed_worker, set_seed, str_to_bool
 
 from tqdm import tqdm
 
+evaluation_package_dir = os.path.join(
+    os.path.dirname(__file__), "evaluation-package")
+if evaluation_package_dir not in sys.path:
+    sys.path.append(evaluation_package_dir)
+from calculate_metrics import calculate_minDCF_EER_CLLR_actDCF
+
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+
+def evaluate_with_official_package(
+        cm_scores_file: Union[str, os.PathLike],
+        output_file: Union[str, os.PathLike]):
+    """Read CM scores and evaluate them with the ASVspoof 5 official package."""
+    cm_keys = []
+    cm_scores = []
+
+    with open(cm_scores_file, "r") as score_fh:
+        for line in score_fh:
+            parts = line.strip().split()
+            if len(parts) < 4:
+                continue
+            cm_keys.append(parts[-2])
+            cm_scores.append(float(parts[-1]))
+
+    if not cm_scores:
+        raise ValueError("No CM scores were found in {}".format(cm_scores_file))
+
+    cm_scores = np.asarray(cm_scores, dtype=np.float64)
+    cm_keys = np.asarray(cm_keys)
+
+    min_dcf, eer, cllr, act_dcf = calculate_minDCF_EER_CLLR_actDCF(
+        cm_scores, cm_keys, output_file, printout=False)
+    min_dcf = float(min_dcf)
+    eer = float(eer)
+    cllr = float(cllr)
+    act_dcf = float(act_dcf)
+
+    with open(output_file, "w") as f_res:
+        f_res.write("\nCM SYSTEM\n")
+        f_res.write("\tmin DCF \t\t= {} (min DCF for countermeasure)\n".format(
+            min_dcf))
+        f_res.write("\tEER\t\t= {:8.9f} % (EER for countermeasure)\n".format(
+            eer * 100))
+        f_res.write("\tCLLR\t\t= {:8.9f} bits (CLLR for countermeasure)\n".format(
+            cllr))
+        f_res.write("\tactDCF\t\t= {} (actual DCF)\n".format(act_dcf))
+
+    return min_dcf, eer * 100, cllr, act_dcf
 
 
 def main(args: argparse.Namespace) -> None:
@@ -98,15 +145,13 @@ def main(args: argparse.Namespace) -> None:
         print("Start evaluation...")
         produce_evaluation_file(eval_loader, model, device,
                                 eval_score_path, eval_trial_path)
-        calculate_tDCF_EER(cm_scores_file=eval_score_path,
-                           asv_score_file=database_path /
-                           config["asv_score_path"],
-                           output_file=model_tag / "t-DCF_EER.txt")
-        print("DONE.")
-        eval_eer, eval_tdcf = calculate_tDCF_EER(
+        eval_minDCF, eval_eer, eval_cllr, eval_actDCF = (
+            evaluate_with_official_package(
             cm_scores_file=eval_score_path,
-            asv_score_file=database_path / config["asv_score_path"],
-            output_file=model_tag/"loaded_model_t-DCF_EER.txt")
+            output_file=model_tag/"loaded_model_minDCF_EER_CLLR_actDCF.txt"))
+        print("DONE.\nEval eer: {:.3f}%, eval_minDCF: {:.5f}, "
+              "eval_actDCF: {:.5f}, cllr: {:.5f}".format(
+                  eval_eer, eval_minDCF, eval_actDCF, eval_cllr))
         sys.exit(0)
 
     # get optimizer and scheduler
@@ -114,10 +159,10 @@ def main(args: argparse.Namespace) -> None:
     optimizer, scheduler = create_optimizer(model.parameters(), optim_config)
     optimizer_swa = SWA(optimizer)
 
-    best_dev_eer = 1.
+    best_dev_eer = 100.
     best_eval_eer = 100.
-    best_dev_tdcf = 0.05
-    best_eval_tdcf = 1.
+    best_dev_minDCF = 1.
+    best_eval_minDCF = 1.
     n_swa_update = 0  # number of snapshots of model to use in SWA
     f_log = open(model_tag / "metric_log.txt", "a")
     f_log.write("=" * 5 + "\n")
@@ -133,18 +178,21 @@ def main(args: argparse.Namespace) -> None:
                                    scheduler, config)
         produce_evaluation_file(dev_loader, model, device,
                                 metric_path/"dev_score.txt", dev_trial_path)
-        dev_eer, dev_tdcf = calculate_tDCF_EER(
+        dev_minDCF, dev_eer, dev_cllr, dev_actDCF = (
+            evaluate_with_official_package(
             cm_scores_file=metric_path/"dev_score.txt",
-            asv_score_file=database_path/config["asv_score_path"],
-            output_file=metric_path/"dev_t-DCF_EER_{}epo.txt".format(epoch),
-            printout=False)
-        print("DONE.\nLoss:{:.5f}, dev_eer: {:.3f}, dev_tdcf:{:.5f}".format(
-            running_loss, dev_eer, dev_tdcf))
+            output_file=metric_path /
+            "dev_minDCF_EER_CLLR_actDCF_{}epo.txt".format(epoch)))
+        print("DONE.\nLoss:{:.5f}, dev_eer: {:.3f}%, dev_minDCF:{:.5f}, "
+              "dev_actDCF:{:.5f}, cllr:{:.5f}".format(
+                  running_loss, dev_eer, dev_minDCF, dev_actDCF, dev_cllr))
         writer.add_scalar("loss", running_loss, epoch)
         writer.add_scalar("dev_eer", dev_eer, epoch)
-        writer.add_scalar("dev_tdcf", dev_tdcf, epoch)
+        writer.add_scalar("dev_minDCF", dev_minDCF, epoch)
+        writer.add_scalar("dev_actDCF", dev_actDCF, epoch)
+        writer.add_scalar("dev_cllr", dev_cllr, epoch)
 
-        best_dev_tdcf = min(dev_tdcf, best_dev_tdcf)
+        best_dev_minDCF = min(dev_minDCF, best_dev_minDCF)
         if best_dev_eer >= dev_eer:
             print("best model find at epoch", epoch)
             best_dev_eer = dev_eer
@@ -155,30 +203,32 @@ def main(args: argparse.Namespace) -> None:
             if str_to_bool(config["eval_all_best"]):
                 produce_evaluation_file(eval_loader, model, device,
                                         eval_score_path, eval_trial_path)
-                eval_eer, eval_tdcf = calculate_tDCF_EER(
+                eval_minDCF, eval_eer, eval_cllr, eval_actDCF = (
+                    evaluate_with_official_package(
                     cm_scores_file=eval_score_path,
-                    asv_score_file=database_path / config["asv_score_path"],
                     output_file=metric_path /
-                    "t-DCF_EER_{:03d}epo.txt".format(epoch))
+                    "minDCF_EER_CLLR_actDCF_{:03d}epo.txt".format(epoch)))
 
-                log_text = "epoch{:03d}, ".format(epoch)
+                log_items = ["epoch{:03d}".format(epoch)]
                 if eval_eer < best_eval_eer:
-                    log_text += "best eer, {:.4f}%".format(eval_eer)
+                    log_items.append("best eer {:.4f}%".format(eval_eer))
                     best_eval_eer = eval_eer
-                if eval_tdcf < best_eval_tdcf:
-                    log_text += "best tdcf, {:.4f}".format(eval_tdcf)
-                    best_eval_tdcf = eval_tdcf
+                if eval_minDCF < best_eval_minDCF:
+                    log_items.append("best minDCF {:.4f}".format(eval_minDCF))
+                    best_eval_minDCF = eval_minDCF
                     torch.save(model.state_dict(),
                                model_save_path / "best.pth")
-                if len(log_text) > 0:
-                    print(log_text)
-                    f_log.write(log_text + "\n")
+                log_items.append("actDCF {:.4f}".format(eval_actDCF))
+                log_items.append("CLLR {:.4f}".format(eval_cllr))
+                log_text = ", ".join(log_items)
+                print(log_text)
+                f_log.write(log_text + "\n")
 
             print("Saving epoch {} for swa".format(epoch))
             optimizer_swa.update_swa()
             n_swa_update += 1
         writer.add_scalar("best_dev_eer", best_dev_eer, epoch)
-        writer.add_scalar("best_dev_tdcf", best_dev_tdcf, epoch)
+        writer.add_scalar("best_dev_minDCF", best_dev_minDCF, epoch)
 
     print("Start final evaluation")
     epoch += 1
@@ -187,13 +237,14 @@ def main(args: argparse.Namespace) -> None:
         optimizer_swa.bn_update(trn_loader, model, device=device)
     produce_evaluation_file(eval_loader, model, device, eval_score_path,
                             eval_trial_path)
-    eval_eer, eval_tdcf = calculate_tDCF_EER(cm_scores_file=eval_score_path,
-                                             asv_score_file=database_path /
-                                             config["asv_score_path"],
-                                             output_file=model_tag / "t-DCF_EER.txt")
+    eval_minDCF, eval_eer, eval_cllr, eval_actDCF = (
+        evaluate_with_official_package(
+            cm_scores_file=eval_score_path,
+            output_file=model_tag / "minDCF_EER_CLLR_actDCF.txt"))
     f_log = open(model_tag / "metric_log.txt", "a")
     f_log.write("=" * 5 + "\n")
-    f_log.write("EER: {:.3f}, min t-DCF: {:.5f}".format(eval_eer, eval_tdcf))
+    f_log.write("EER: {:.3f}%, minDCF: {:.5f}, actDCF: {:.5f}, CLLR: {:.5f}".format(
+        eval_eer, eval_minDCF, eval_actDCF, eval_cllr))
     f_log.close()
 
     torch.save(model.state_dict(),
@@ -201,12 +252,12 @@ def main(args: argparse.Namespace) -> None:
 
     if eval_eer <= best_eval_eer:
         best_eval_eer = eval_eer
-    if eval_tdcf <= best_eval_tdcf:
-        best_eval_tdcf = eval_tdcf
+    if eval_minDCF <= best_eval_minDCF:
+        best_eval_minDCF = eval_minDCF
         torch.save(model.state_dict(),
                    model_save_path / "best.pth")
-    print("Exp FIN. EER: {:.3f}, min t-DCF: {:.5f}".format(
-        best_eval_eer, best_eval_tdcf))
+    print("Exp FIN. EER: {:.3f}%, minDCF: {:.5f}, actDCF: {:.5f}, CLLR: {:.5f}".format(
+        best_eval_eer, best_eval_minDCF, eval_actDCF, eval_cllr))
 
 
 def get_model(model_config: Dict, device: torch.device):
@@ -326,7 +377,7 @@ def produce_evaluation_file(
             label = cols[8] # bonafide or spoof
             assert fn == utt_id
             
-            # 写入格式：utt_id - label score (兼容现有的 calculate_tDCF_EER 函数)
+            # Write format: utt_id - label score (for official ASVspoof 5 evaluation package)
             fh.write("{} - {} {}\n".format(utt_id, label, sco))
     print("Scores saved to {}".format(save_path))
 
