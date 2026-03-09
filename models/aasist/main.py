@@ -145,10 +145,10 @@ def main(args: argparse.Namespace) -> None:
         print("Start evaluation...")
         produce_evaluation_file(eval_loader, model, device,
                                 eval_score_path, eval_trial_path)
-        eval_minDCF, eval_eer, eval_cllr, eval_actDCF = \
+        eval_minDCF, eval_eer, eval_cllr, eval_actDCF = (
             evaluate_with_official_package(
             cm_scores_file=eval_score_path,
-            output_file=model_tag/"loaded_model_minDCF_EER_CLLR_actDCF.txt")
+            output_file=model_tag/"loaded_model_minDCF_EER_CLLR_actDCF.txt"))
         print("DONE.\nEval eer: {:.3f}%, eval_minDCF: {:.5f}, "
               "eval_actDCF: {:.5f}, cllr: {:.5f}".format(
                   eval_eer, eval_minDCF, eval_actDCF, eval_cllr))
@@ -178,11 +178,11 @@ def main(args: argparse.Namespace) -> None:
                                    scheduler, config)
         produce_evaluation_file(dev_loader, model, device,
                                 metric_path/"dev_score.txt", dev_trial_path)
-        dev_minDCF, dev_eer, dev_cllr, dev_actDCF = \
+        dev_minDCF, dev_eer, dev_cllr, dev_actDCF = (
             evaluate_with_official_package(
             cm_scores_file=metric_path/"dev_score.txt",
             output_file=metric_path /
-            "dev_minDCF_EER_CLLR_actDCF_{}epo.txt".format(epoch))
+            "dev_minDCF_EER_CLLR_actDCF_{}epo.txt".format(epoch)))
         print("DONE.\nLoss:{:.5f}, dev_eer: {:.3f}%, dev_minDCF:{:.5f}, "
               "dev_actDCF:{:.5f}, cllr:{:.5f}".format(
                   running_loss, dev_eer, dev_minDCF, dev_actDCF, dev_cllr))
@@ -203,11 +203,11 @@ def main(args: argparse.Namespace) -> None:
             if str_to_bool(config["eval_all_best"]):
                 produce_evaluation_file(eval_loader, model, device,
                                         eval_score_path, eval_trial_path)
-                eval_minDCF, eval_eer, eval_cllr, eval_actDCF = \
+                eval_minDCF, eval_eer, eval_cllr, eval_actDCF = (
                     evaluate_with_official_package(
                     cm_scores_file=eval_score_path,
                     output_file=metric_path /
-                    "minDCF_EER_CLLR_actDCF_{:03d}epo.txt".format(epoch))
+                    "minDCF_EER_CLLR_actDCF_{:03d}epo.txt".format(epoch)))
 
                 log_items = ["epoch{:03d}".format(epoch)]
                 if eval_eer < best_eval_eer:
@@ -237,10 +237,10 @@ def main(args: argparse.Namespace) -> None:
         optimizer_swa.bn_update(trn_loader, model, device=device)
     produce_evaluation_file(eval_loader, model, device, eval_score_path,
                             eval_trial_path)
-    eval_minDCF, eval_eer, eval_cllr, eval_actDCF = \
+    eval_minDCF, eval_eer, eval_cllr, eval_actDCF = (
         evaluate_with_official_package(
             cm_scores_file=eval_score_path,
-            output_file=model_tag / "minDCF_EER_CLLR_actDCF.txt")
+            output_file=model_tag / "minDCF_EER_CLLR_actDCF.txt"))
     f_log = open(model_tag / "metric_log.txt", "a")
     f_log.write("=" * 5 + "\n")
     f_log.write("EER: {:.3f}%, minDCF: {:.5f}, actDCF: {:.5f}, CLLR: {:.5f}".format(
