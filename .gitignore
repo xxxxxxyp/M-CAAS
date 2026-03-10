@@ -20,7 +20,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
+models/aasist/exp_result/
 # Virtual Environment
 venv/
 env/
